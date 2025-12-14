@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import axios from "axios";
 import generateSeatingPDF from "./pdf1";
 import supabase from "./supabaseclient";
-import { generateHallQR } from "./qr";   // ✅ QR IMPORT
+import { generateHallQR } from "./qr"; // ✅ Updated QR import
 
 function Upload() {
   const [file, setFile] = useState(null);
@@ -12,6 +12,7 @@ function Upload() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selectedYear, setSelectedYear] = useState("");
+  const [seatMap, setSeatMap] = useState({}); // ✅ For student lookup
 
   // ---------------- TABLE MAPPING ----------------
   const yearTableMap = {
@@ -32,16 +33,10 @@ function Upload() {
 
   // ---------------- UPLOAD EXCEL ----------------
   const handleClick = async () => {
-    if (!file) {
-      setMess("Please select a file first");
-      return;
-    }
-
+    if (!file) return setMess("Please select a file first");
     const ext = file.name.split(".").pop().toLowerCase();
-    if (!["xlsx", "xls"].includes(ext)) {
-      setMess("Invalid file type. Please upload Excel (.xlsx, .xls)");
-      return;
-    }
+    if (!["xlsx", "xls"].includes(ext))
+      return setMess("Invalid file type. Please upload Excel (.xlsx, .xls)");
 
     const formData = new FormData();
     formData.append("file", file);
@@ -56,30 +51,30 @@ function Upload() {
 
       setJson(response.data);
       setMess("✅ Excel uploaded and processed successfully");
-    } catch (error) {
-      console.error("Upload error:", error);
-      setMess("❌ Error uploading Excel file");
+
+      // ---------------- GENERATE SEAT MAP ----------------
+      const newSeatMap = {};
+      Object.keys(response.data).forEach((hall) => {
+        response.data[hall].forEach((regNo, idx) => {
+          newSeatMap[regNo] = { hall, seat: idx + 1 }; // hall + seat
+        });
+      });
+      setSeatMap(newSeatMap);
+      console.log("Seat Map:", newSeatMap); // Debugging
+    } catch (err) {
+      console.error(err);
+      setMess("❌ Error uploading Excel");
     }
   };
 
   // ---------------- FETCH REGISTER NUMBERS ----------------
   const fetchDataByYear = async () => {
-    if (!selectedYear) {
-      setMess("Please select a year first");
-      return;
-    }
-
+    if (!selectedYear) return setMess("Please select a year first");
     const table = yearTableMap[selectedYear];
-    if (!table) {
-      setMess("Invalid year selected");
-      return;
-    }
 
     try {
-      setMess(`Fetching register numbers from ${table}...`);
-
       let allData = [];
-      let from = 0;
+      let lastRegNo = "";
       const batchSize = 1000;
       let fetchMore = true;
 
@@ -87,36 +82,31 @@ function Upload() {
         const { data, error } = await supabase
           .from(table)
           .select("Reg_No")
-          .range(from, from + batchSize - 1);
+          .gt("Reg_No", lastRegNo)
+          .order("Reg_No", { ascending: true })
+          .limit(batchSize);
 
-        if (error) {
-          setMess(`❌ Error fetching data: ${error.message}`);
-          return;
-        }
+        if (error) return setMess(`❌ Error fetching data: ${error.message}`);
+        if (!data || data.length === 0) break;
 
         allData = allData.concat(data);
-        from += batchSize;
-        if (!data || data.length < batchSize) fetchMore = false;
+        lastRegNo = data[data.length - 1].Reg_No;
       }
 
-      const mappedData = allData.map((d) => ({
-        Roll_No: d.Reg_No,
-      }));
-
+      const mappedData = allData.map((d) => ({ Roll_No: d.Reg_No }));
       setDbData(mappedData);
       setMess(`✅ Fetched ${mappedData.length} register numbers`);
     } catch (err) {
-      console.error("Fetch error:", err);
+      console.error(err);
       setMess("❌ Unexpected error while fetching data");
     }
   };
 
   // ---------------- GENERATE PDF ----------------
   const handleGeneratePDF = async () => {
-    if (!json || dbData.length === 0) {
-      setMess("Upload Excel and fetch register numbers first");
-      return;
-    }
+    if (!json || Object.keys(json).length === 0)
+      return setMess("⚠ No hall data found. Upload Excel correctly.");
+    if (!dbData.length) return setMess("⚠ Fetch register numbers first");
 
     try {
       await generateSeatingPDF({
@@ -127,18 +117,16 @@ function Upload() {
       });
       setMess("✅ Seating PDF generated successfully");
     } catch (err) {
-      console.error("PDF error:", err);
+      console.error(err);
       setMess("❌ Error generating PDF");
     }
   };
 
   // ---------------- GENERATE QR ----------------
   const handleGenerateQR = () => {
-    if (!json) {
-      setMess("Upload Excel first to generate QR");
-      return;
-    }
-    generateHallQR(json);   // ✅ PASS FULL SEATING DATA
+    if (!Object.keys(seatMap).length)
+      return setMess("⚠ Upload Excel first to generate QR");
+    generateHallQR(); // QR points to student lookup page
   };
 
   // ---------------- UI ----------------
@@ -173,12 +161,71 @@ function Upload() {
 
       <div style={{ marginTop: 20 }}>
         <label>From: </label>
-        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        <input
+          type="date"
+          value={fromDate}
+          onChange={(e) => setFromDate(e.target.value)}
+        />
         <label style={{ marginLeft: 10 }}>To: </label>
-        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        <input
+          type="date"
+          value={toDate}
+          onChange={(e) => setToDate(e.target.value)}
+        />
       </div>
 
       <p style={{ color: "blue", marginTop: 10 }}>{mess}</p>
+
+      {/* ---------------- BACKEND JSON DISPLAY ---------------- */}
+      {json && (
+        <div style={{ marginTop: 20 }}>
+          <h3>📦 Backend JSON Data (for debugging)</h3>
+          <pre
+            style={{
+              maxHeight: "300px",
+              overflow: "auto",
+              backgroundColor: "#f4f4f4",
+              padding: "15px",
+              borderRadius: "6px",
+              fontSize: "12px",
+              border: "1px solid #ccc",
+            }}
+          >
+            {JSON.stringify(json, null, 2)}
+          </pre>
+
+          <div style={{ marginTop: 10 }}>
+            <strong>🧾 Halls detected:</strong>{" "}
+            {Object.keys(json).length > 0
+              ? Object.keys(json).join(", ")
+              : "❌ None"}
+          </div>
+        </div>
+      )}
+
+      {/* ---------------- REGISTER NUMBERS DISPLAY ---------------- */}
+      {dbData.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <h3>📝 Fetched Register Numbers</h3>
+          <pre
+            style={{
+              maxHeight: "300px",
+              overflow: "auto",
+              backgroundColor: "#f9f9f9",
+              padding: "15px",
+              borderRadius: "6px",
+              fontSize: "12px",
+              border: "1px solid #ccc",
+            }}
+          >
+            {JSON.stringify(dbData, null, 2)}
+          </pre>
+
+          <div style={{ marginTop: 10 }}>
+            <strong>Total fetched:</strong> {dbData.length}
+          </div>
+        </div>
+      )}
 
       <div style={{ marginTop: 30 }}>
         <button
@@ -190,7 +237,7 @@ function Upload() {
             border: "none",
             borderRadius: 5,
             cursor: "pointer",
-            marginRight: 15
+            marginRight: 15,
           }}
         >
           Generate Seating PDF

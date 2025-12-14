@@ -1,59 +1,43 @@
 import React, { useState } from "react";
 import QRCode from "qrcode";
 
-/* ===============================
-   TEMP SEAT DATA (REPLACE LATER)
-   =============================== */
-const seatMap = {
-  T1: {
-    "24CE0001": 1,
-    "24CE0002": 2,
-    "24CE0003": 3
-  },
-  T2: {
-    "24CS0001": 5,
-    "24CS0002": 6
-  }
-};
+const FRONTEND_URL = "https://seating-frontend-1.onrender.com";
 
-/* ===============================
-   QR GENERATOR (TEACHER)
-   =============================== */
-export async function generateHallQR(hall) {
-  const url = `${window.location.origin}/qr-seat?hall=${hall}`;
+/* -----------------------------
+   QR GENERATOR (Teacher)
+   ----------------------------- */
+export async function generateHallQR() {
+  // QR just points to the student lookup page
+  const url = `${FRONTEND_URL}/qr-seat`;
   const qr = await QRCode.toDataURL(url);
 
   const win = window.open();
   win.document.write(`
     <html>
       <body style="text-align:center;padding:40px">
-        <h2>Hall ${hall} QR Code</h2>
+        <h2>Scan QR to check your seat</h2>
         <img src="${qr}" />
-        <p>Scan and enter Register Number</p>
+        <p>Enter your Register Number after scanning</p>
       </body>
     </html>
   `);
 }
 
-/* ===============================
-   STUDENT PAGE (AFTER SCAN)
-   =============================== */
-export function SeatLookup() {
-  const params = new URLSearchParams(window.location.search);
-  const hall = params.get("hall");
-
+/* -----------------------------
+   STUDENT PAGE (After Scan)
+   ----------------------------- */
+export function SeatLookup({ seatMap }) {
   const [reg, setReg] = useState("");
-  const [seat, setSeat] = useState(null);
+  const [result, setResult] = useState(null);
 
   const handleSubmit = () => {
-    const found = seatMap[hall]?.[reg];
-    setSeat(found ?? "INVALID");
+    const info = seatMap[reg.trim()]; // trim to avoid spaces
+    setResult(info ?? "INVALID");
   };
 
   return (
     <div style={{ textAlign: "center", padding: "40px" }}>
       <h2>Seat Information</h2>
-      <p><b>Hall:</b> {hall}</p>
 
       <input
         placeholder="Enter Register Number"
@@ -64,15 +48,15 @@ export function SeatLookup() {
 
       <button onClick={handleSubmit}>Submit</button>
 
-      {seat && (
+      {result && (
         <div style={{ marginTop: 20 }}>
-          {seat === "INVALID" ? (
+          {result === "INVALID" ? (
             <p style={{ color: "red" }}>Invalid Register Number</p>
           ) : (
             <>
               <p><b>Register Number:</b> {reg}</p>
-              <p><b>Hall Number:</b> {hall}</p>
-              <p><b>Seat Number:</b> {seat}</p>
+              <p><b>Hall Number:</b> {result.hall}</p>
+              <p><b>Seat Number:</b> {result.seat}</p>
             </>
           )}
         </div>
