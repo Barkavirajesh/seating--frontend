@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import supabase from "./supabaseclient";   // 🔥 NEW
 
 const hallOrder = [
   "601","602","603","604","605","606","607","608",
@@ -32,12 +33,7 @@ const deptCodeMapSecondYear = {
   "MT":"MCT","VL":"VLSI"
 };
 
-const deptCodeMapThirdYear = {
-  "BM":"BME","CE":"CIVIL","CS":"CSE","AM":"AIML",
-  "CZ":"CS","EC":"ECE","AC":"ACT","AD":"AIDS",
-  "CB":"CSBS","EE":"EEE","IT":"IT","ME":"MECH",
-  "MT":"MCT","VL":"VLSI"
-};
+const deptCodeMapThirdYear = deptCodeMapSecondYear;
 
 // ---------------- Helpers ----------------
 function detectRegValue(objOrString) {
@@ -69,18 +65,13 @@ function groupRegistersByDept(registerNumbers) {
   return deptWise;
 }
 
-// ✅ Same dept together first, leftovers mixed
 function makeBenchesDeptPriority(deptQueues) {
   const benches = [];
   const leftovers = [];
 
   for (const dept of Object.keys(deptQueues)) {
     const list = [...deptQueues[dept]];
-
-    while (list.length >= 2) {
-      benches.push([list.shift(), list.shift()]);
-    }
-
+    while (list.length >= 2) benches.push([list.shift(), list.shift()]);
     if (list.length === 1) leftovers.push(list.shift());
   }
 
@@ -92,20 +83,25 @@ function makeBenchesDeptPriority(deptQueues) {
 }
 
 // ---------------- PDF Generation ----------------
-export default function generateSeatingPDF({ jsonData, registerNumbers, fromDate, toDate }) {
+export default async function generateSeatingPDF({
+  jsonData,
+  registerNumbers,
+  fromDate,
+  toDate
+}) {
   if (!jsonData || !registerNumbers?.length) {
     alert("⚠ Missing data!");
     return;
   }
 
   const deptWise = groupRegistersByDept(registerNumbers);
-
-  // ✅ GLOBAL POINTER PER DEPARTMENT
   const deptIndex = {};
   Object.keys(deptWise).forEach(d => deptIndex[d] = 0);
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   let firstPage = true;
+
+  const seatingMapRows = [];   // 🔥 NEW
 
   function drawTitle(hall) {
     doc.setFontSize(18);
@@ -129,7 +125,6 @@ export default function generateSeatingPDF({ jsonData, registerNumbers, fromDate
       const start = deptIndex[department] || 0;
       const end = start + students_count;
 
-      // ✅ SAFE SLICE (NO DATA LOSS)
       deptQueues[department] = src.slice(start, end);
       deptIndex[department] = end;
 
@@ -140,13 +135,27 @@ export default function generateSeatingPDF({ jsonData, registerNumbers, fromDate
 
     const benches = makeBenchesDeptPriority(deptQueues);
 
+    benches.forEach((bench, i) => {
+      bench.forEach((reg) => {
+        if (reg) {
+          seatingMapRows.push({
+            reg_no: reg,
+            hall: hall,
+            seat: i + 1
+          });
+        }
+      });
+    });
+
     for (let pageStart = 0; pageStart < benches.length; pageStart += BENCHES_PER_PAGE) {
       const pageBenches = benches.slice(pageStart, pageStart + BENCHES_PER_PAGE);
 
       const seatOrder = [];
       for (let c = 0; c < COLUMNS; c++) {
-        if (c % 2 === 0) for (let r = 0; r < ROWS; r++) seatOrder.push({ r, c });
-        else for (let r = ROWS - 1; r >= 0; r--) seatOrder.push({ r, c });
+        if (c % 2 === 0)
+          for (let r = 0; r < ROWS; r++) seatOrder.push({ r, c });
+        else
+          for (let r = ROWS - 1; r >= 0; r--) seatOrder.push({ r, c });
       }
 
       const grid = Array.from({ length: ROWS }, () =>
@@ -177,15 +186,14 @@ export default function generateSeatingPDF({ jsonData, registerNumbers, fromDate
         head: [head],
         body,
         theme: "grid",
-        styles: { fontSize: 10, halign: "center", valign: "middle" },
-        columnStyles: Object.fromEntries(
-          Array.from({ length: COLUMNS * 2 }, (_, i) => [
-            i, { cellWidth: i % 2 === 0 ? 85 : 30 }
-          ])
-        )
+        styles: { fontSize: 10, halign: "center", valign: "middle" }
       });
     }
   }
+
+  // 🔥 SAVE SEATING MAP TO SUPABASE
+  await supabase.from("seating_map").delete().neq("reg_no", "");
+  await supabase.from("seating_map").insert(seatingMapRows);
 
   doc.save("hall_seating_arrangement.pdf");
 }
